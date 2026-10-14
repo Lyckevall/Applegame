@@ -1,0 +1,465 @@
+cat > index.html << 'EOF'
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drak- & Ormspelet</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{min-height:100vh;background:#0e1116;color:#fff;font-family:system-ui,"Segoe UI",sans-serif;
+       display:flex;flex-direction:column;align-items:center;padding:18px 12px;user-select:none}
+  h1{font-size:clamp(1.5rem,5vw,2.4rem);margin-bottom:4px;text-align:center}
+  .sub{color:#9aa4b5;margin-bottom:16px;text-align:center}
+
+  #menu{width:100%;max-width:640px;display:flex;flex-direction:column;align-items:center;gap:16px}
+  #cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;width:100%}
+  .card{background:#1a1f29;border:2px solid transparent;border-radius:14px;padding:8px;cursor:pointer;
+        text-align:center;transition:transform .15s,border-color .15s}
+  .card:hover{transform:translateY(-3px);border-color:#3a4457}
+  .card.sel{border-color:#ffcf3a;box-shadow:0 0 18px rgba(255,207,58,.35)}
+  .card canvas{width:100%;border-radius:10px;display:block;margin-bottom:6px}
+  .card small{display:block;color:#8d98aa;margin-top:2px}
+  .big{background:#ffcf3a;color:#1b1400;border:0;border-radius:999px;padding:.8em 1.8em;
+       font-size:1.1rem;font-weight:700;cursor:pointer}
+  .big:hover{background:#ffdb6a}
+
+  #game{display:none;width:100%;max-width:560px}
+  .hud{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-weight:600;gap:8px;flex-wrap:wrap}
+  .hud b{color:#ffcf3a}
+  #wrap{position:relative;touch-action:none}
+  #board{width:100%;height:auto;display:block;border:3px solid #2a3140;border-radius:12px}
+  #ov{position:absolute;inset:0;border-radius:12px;background:rgba(0,0,0,.6);display:flex;flex-direction:column;
+      align-items:center;justify-content:center;gap:10px;text-align:center;padding:16px}
+  #ov[hidden]{display:none}
+  #ov h2{font-size:2rem}
+  #ov p{color:#cfd6e2}
+  .btns{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+  .btns button,.small{background:#2a3140;color:#fff;border:0;border-radius:999px;padding:.6em 1.3em;
+                      font-size:1rem;font-weight:600;cursor:pointer}
+  .btns button:first-child{background:#ffcf3a;color:#1b1400}
+  .btns button:hover,.small:hover{filter:brightness(1.15)}
+  .help{color:#8d98aa;font-size:.85rem;margin:10px 0;text-align:center}
+  #game .small{display:block;margin:0 auto}
+
+  @media(max-width:520px){#cards{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+
+<h1>🐍 Drak- & Ormspelet 🐉</h1>
+<p class="sub">Välj din figur, ät äpplen och bli längre!</p>
+
+<section id="menu">
+  <div id="cards"></div>
+  <button class="big" id="playBtn">Spela</button>
+</section>
+
+<section id="game">
+  <div class="hud">
+    <span>Poäng: <b id="score">0</b></span>
+    <span id="sname"></span>
+    <span>Rekord: <b id="best">0</b></span>
+  </div>
+  <div id="wrap">
+    <canvas id="board" width="560" height="560"></canvas>
+    <div id="ov" hidden></div>
+  </div>
+  <p class="help">Piltangenter / WASD · Mellanslag = paus · Esc = byt figur · Svep på mobil</p>
+  <button class="small" id="menuBtn">Byt figur</button>
+</section>
+
+<script>
+/* ============ Figurer ============ */
+const val = (v, ...a) => typeof v === 'function' ? v(...a) : v;
+
+const SKINS = [
+  // ---- ormar ----
+  {id:'gron', name:'Grön orm', type:'Orm', kind:'snake', size:.42,
+   color:i => i%3===1 ? '#1f8a34' : (i%2 ? '#3fbf4f' : '#34ad45'), head:'#46d05a',
+   bg:['#16301d','#1b3a23'], parts:['#6aff7a','#c8ffcf','#2f9e41']},
+  {id:'korall', name:'Korallorm', type:'Orm', kind:'snake', size:.42,
+   color:i => ['#e5252a','#f6d02f','#151515','#f6d02f'][i%4], head:'#1b1b1b',
+   bg:['#2b2118','#33281d'], parts:['#e5252a','#f6d02f','#ffffff']},
+  {id:'guld', name:'Guldorm', type:'Orm', kind:'snake', size:.42,
+   color:(i,n,t) => `hsl(44,95%,${52+14*Math.sin(t*4-i*.55)}%)`, head:'#ffd54a', glow:'#ffcf3a',
+   bg:['#241d0e','#2c2412'], parts:['#ffe27a','#fff6c7','#ffb300']},
+  {id:'regn', name:'Regnbågsorm', type:'Orm', kind:'snake', size:.42,
+   color:(i,n,t) => `hsl(${(i*22+t*90)%360},85%,58%)`, head:(t) => `hsl(${(t*90)%360},90%,66%)`, glow:'#ffffff',
+   bg:['#12142a','#171a33'], parts:['#ff5c8a','#ffd23a','#4dd2ff','#7dff6a']},
+  // ---- maskar ----
+  {id:'mask', name:'Mask', type:'Mask', kind:'worm', size:.43,
+   color:(i) => (i>=3&&i<=5) ? '#f7c3cd' : (i%2 ? '#ea8fa3' : '#f09db0'), head:'#f4a9b8',
+   bg:['#2a1c14','#33231a'], parts:['#8a5a3b','#ea8fa3','#5a3a24']},
+  {id:'larv', name:'Larv', type:'Mask', kind:'worm', size:.43, legs:'#ffcf3a', antennae:true,
+   color:i => i%2 ? '#a6e34a' : '#8fd13a', head:'#d9f06a',
+   bg:['#17301a','#1c3a20'], parts:['#a6e34a','#ffcf3a','#e8ff9a']},
+  // ---- drakar ----
+  {id:'eld', name:'Eldrake', type:'Drake', kind:'dragon', size:.43,
+   color:(i,n) => `hsl(${8+(i/n)*30},85%,${44+(i%2)*4}%)`, head:'#b51212', spike:'#ffcf3a',
+   wing:'rgba(255,110,30,.65)', glow:'#ff5a1a', breath:['#ff6a00','#ffd23a'],
+   bg:['#2a1010','#331515'], parts:['#ff6a00','#ffd23a','#ff3b1a']},
+  {id:'is', name:'Isdrake', type:'Drake', kind:'dragon', size:.43,
+   color:(i,n) => `hsl(${190+(i/n)*15},80%,${70-(i%2)*6}%)`, head:'#e8fbff', spike:'#ffffff',
+   wing:'rgba(150,225,255,.6)', glow:'#7fe3ff', breath:['#9be7ff','#ffffff'],
+   bg:['#0f2233','#132a3d'], parts:['#cdf3ff','#7fd8ff','#ffffff']},
+  {id:'neon', name:'Neondrake', type:'Drake', kind:'dragon', size:.43,
+   color:(i,n,t) => `hsl(${280+20*Math.sin(i*.4-t*3)},80%,${42+8*Math.sin(i*.5-t*4)}%)`, head:'#7d1fd1',
+   spike:'#39ff14', wing:'rgba(57,255,20,.45)', glow:'#39ff14', breath:['#39ff14','#eaffd6'],
+   bg:['#140a24','#190d2c'], parts:['#39ff14','#c07bff','#ffffff']},
+];
+
+/* ============ Ritar en figur (används både i spelet och i menyn) ============ */
+function drawCreature(ctx, pts, skin, R, time, breath){
+  const n = pts.length;
+  const rad = i => { const k = n-1-i; return R * (k<4 ? .55+.45*k/4 : 1); };
+  const tan = i => {            // riktning mot svansen
+    const a = pts[Math.max(i-1,0)], b = pts[Math.min(i+1,n-1)];
+    const dx = b.x-a.x, dy = b.y-a.y, l = Math.hypot(dx,dy);
+    return l < .01 ? {x:1,y:0} : {x:dx/l, y:dy/l};
+  };
+  const ol = () => { ctx.strokeStyle='rgba(0,0,0,.28)'; ctx.lineWidth=1.5; ctx.stroke(); };
+
+  /* Drakdetaljer bakom kroppen: taggar, vingar, svansspets */
+  if (skin.kind === 'dragon') {
+    ctx.fillStyle = skin.spike;
+    for (let i=1; i<n-1; i+=2) {
+      const c=pts[i], t=tan(i), r=rad(i), nx=-t.y, ny=t.x;
+      for (const s of [1,-1]) {
+        ctx.beginPath();
+        ctx.moveTo(c.x+nx*s*r*.6+t.x*r*.5, c.y+ny*s*r*.6+t.y*r*.5);
+        ctx.lineTo(c.x+nx*s*r*1.6+t.x*r*.9, c.y+ny*s*r*1.6+t.y*r*.9);
+        ctx.lineTo(c.x+nx*s*r*.6-t.x*r*.5, c.y+ny*s*r*.6-t.y*r*.5);
+        ctx.closePath(); ctx.fill();
+      }
+    }
+    if (n > 4) {
+      const c=pts[2], t=tan(2), r=rad(2), nx=-t.y, ny=t.x, f=.85+.15*Math.sin(time*7);
+      for (const s of [1,-1]) {
+        ctx.fillStyle = skin.wing;
+        ctx.beginPath();
+        ctx.moveTo(c.x+nx*s*r*.5-t.x*r*.6, c.y+ny*s*r*.5-t.y*r*.6);
+        ctx.lineTo(c.x+nx*s*r*3.2*f+t.x*r*1.2, c.y+ny*s*r*3.2*f+t.y*r*1.2);
+        ctx.lineTo(c.x+nx*s*r*1.6*f+t.x*r*2.6, c.y+ny*s*r*1.6*f+t.y*r*2.6);
+        ctx.lineTo(c.x+nx*s*r*.5+t.x*r*1.6, c.y+ny*s*r*.5+t.y*r*1.6);
+        ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = skin.spike; ctx.lineWidth = 1.5; ctx.stroke();
+      }
+    }
+    const a=pts[n-2], b=pts[n-1]; let dx=b.x-a.x, dy=b.y-a.y; const l=Math.hypot(dx,dy)||1; dx/=l; dy/=l;
+    const r=rad(n-1);
+    ctx.fillStyle = skin.spike; ctx.beginPath();
+    ctx.moveTo(b.x+dx*r*2.2, b.y+dy*r*2.2);
+    ctx.lineTo(b.x-dy*r, b.y+dx*r); ctx.lineTo(b.x+dy*r, b.y-dx*r);
+    ctx.closePath(); ctx.fill();
+  }
+
+  /* Sken runt kroppen */
+  if (skin.glow) {
+    ctx.save(); ctx.globalAlpha=.28; ctx.strokeStyle=skin.glow; ctx.lineWidth=R*2+10;
+    ctx.lineCap = ctx.lineJoin = 'round'; ctx.beginPath();
+    pts.forEach((p,i) => i ? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y));
+    ctx.stroke(); ctx.restore();
+  }
+
+  /* Kroppen (från svans till huvud) */
+  ctx.lineCap = 'round';
+  for (let i=n-1; i>=0; i--) {
+    const p=pts[i], r=rad(i), col = i===0 ? val(skin.head,time) : skin.color(i,n,time);
+    if (i < n-1) {
+      const q = pts[i+1];
+      ctx.strokeStyle = col; ctx.lineWidth = 2*Math.min(r, rad(i+1));
+      ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke();
+    }
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,7); ctx.fill(); ol();
+    ctx.fillStyle = 'rgba(255,255,255,.18)';
+    ctx.beginPath(); ctx.arc(p.x-r*.25, p.y-r*.3, r*.45, 0, 7); ctx.fill();
+  }
+
+  /* Små ben (larven) */
+  if (skin.legs) {
+    ctx.fillStyle = skin.legs;
+    for (let i=1; i<n-1; i++) {
+      const c=pts[i], t=tan(i), r=rad(i);
+      for (const s of [1,-1]) { ctx.beginPath(); ctx.arc(c.x-t.y*s*r, c.y+t.x*s*r, r*.22, 0, 7); ctx.fill(); }
+    }
+  }
+
+  /* Huvudet */
+  const hx = pts[0].x-pts[1].x, hy = pts[0].y-pts[1].y;
+  const ang = Math.hypot(hx,hy) < .01 ? 0 : Math.atan2(hy,hx);
+  const hc = val(skin.head, time), r = R;
+  ctx.save(); ctx.translate(pts[0].x, pts[0].y); ctx.rotate(ang);
+
+  if (skin.kind === 'snake') {
+    if (Math.sin(time*9) > .2) {                         // tungan
+      ctx.strokeStyle='#e0263b'; ctx.lineWidth=2; ctx.beginPath();
+      ctx.moveTo(r*1.4,0); ctx.lineTo(r*2.2,0);
+      ctx.moveTo(r*2.2,0); ctx.lineTo(r*2.7,-r*.35);
+      ctx.moveTo(r*2.2,0); ctx.lineTo(r*2.7, r*.35); ctx.stroke();
+    }
+    ctx.fillStyle = hc; ctx.beginPath(); ctx.ellipse(r*.25,0,r*1.35,r,0,0,7); ctx.fill(); ol();
+    for (const s of [-1,1]) {
+      ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(r*.5,s*r*.55,r*.3,0,7); ctx.fill();
+      ctx.fillStyle='#111'; ctx.beginPath(); ctx.ellipse(r*.58,s*r*.55,r*.1,r*.22,0,0,7); ctx.fill();
+    }
+  }
+
+  if (skin.kind === 'worm') {
+    if (skin.antennae) {
+      ctx.strokeStyle = '#4a7a1a'; ctx.lineWidth = 2; ctx.fillStyle = '#ff7a7a';
+      for (const s of [-1,1]) {
+        ctx.beginPath(); ctx.moveTo(r*.5,s*r*.6); ctx.lineTo(r*1.5,s*r*1.2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(r*1.5,s*r*1.2,r*.2,0,7); ctx.fill();
+      }
+    }
+    ctx.fillStyle = hc; ctx.beginPath(); ctx.arc(0,0,r*1.05,0,7); ctx.fill(); ol();
+    for (const s of [-1,1]) {
+      ctx.fillStyle='#1a1a1a'; ctx.beginPath(); ctx.arc(r*.45,s*r*.45,r*.2,0,7); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(r*.5,s*r*.4,r*.07,0,7); ctx.fill();
+    }
+    ctx.strokeStyle='#7a2a3a'; ctx.lineWidth=1.6; ctx.beginPath(); ctx.arc(r*.15,0,r*.55,-.55,.55); ctx.stroke();
+  }
+
+  if (skin.kind === 'dragon') {
+    if (breath && skin.breath) {                         // eld / is / gas
+      for (let k=0; k<3; k++) {
+        const len = r*(2.5+Math.random()*1.5)*(1-k*.28), w = r*(1-k*.28);
+        ctx.globalAlpha=.85; ctx.fillStyle = k===0 ? skin.breath[0] : k===1 ? skin.breath[1] : '#fff';
+        ctx.beginPath(); ctx.moveTo(r*1.5,-w); ctx.quadraticCurveTo(r*1.5+len,0,r*1.5,w); ctx.closePath(); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = '#f2e6c9';                           // horn
+    for (const s of [-1,1]) {
+      ctx.beginPath(); ctx.moveTo(r*.1,s*r*.5); ctx.lineTo(-r,s*r*1.7); ctx.lineTo(-r*.35,s*r*.2);
+      ctx.closePath(); ctx.fill(); ol();
+    }
+    ctx.fillStyle = hc;
+    ctx.beginPath(); ctx.ellipse(r*.2,0,r*1.35,r*1.1,0,0,7); ctx.fill(); ol();
+    ctx.beginPath(); ctx.ellipse(r*1.1,0,r*.75,r*.6,0,0,7); ctx.fill(); ol();
+    ctx.fillStyle = 'rgba(0,0,0,.6)';
+    for (const s of [-1,1]) { ctx.beginPath(); ctx.arc(r*1.55,s*r*.25,r*.1,0,7); ctx.fill(); }
+    for (const s of [-1,1]) {
+      ctx.fillStyle='#ffe14a'; ctx.beginPath(); ctx.ellipse(r*.45,s*r*.6,r*.3,r*.22,s*.3,0,7); ctx.fill();
+      ctx.fillStyle='#111'; ctx.beginPath(); ctx.ellipse(r*.5,s*r*.6,r*.07,r*.2,0,0,7); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+/* ============ Spelet ============ */
+const $ = s => document.querySelector(s);
+const COLS=20, ROWS=20, CELL=28, W=COLS*CELL, H=ROWS*CELL;
+const canvas=$('#board'), ctx=canvas.getContext('2d'), ov=$('#ov');
+
+let skin = SKINS[0], bests = {};
+try {
+  bests = JSON.parse(localStorage.getItem('ormspel_best') || '{}');
+  const sid = localStorage.getItem('ormspel_skin');
+  skin = SKINS.find(s => s.id === sid) || skin;
+} catch(e){}
+const save = () => { try {
+  localStorage.setItem('ormspel_best', JSON.stringify(bests));
+  localStorage.setItem('ormspel_skin', skin.id);
+} catch(e){} };
+
+let snake, prev, dir, queue, apple, score, apples, acc, tick;
+let state='menu', particles=[], breathUntil=0, shake=0, time=0, last=performance.now();
+const rand = n => Math.floor(Math.random()*n);
+
+function reset(){
+  snake = [{x:8,y:10},{x:7,y:10},{x:6,y:10},{x:5,y:10}];
+  prev = snake.map(p => ({...p}));
+  dir = {x:1,y:0}; queue = []; score = 0; apples = 0; acc = 0; tick = 145; particles = [];
+  placeApple(); setHud();
+}
+function placeApple(){
+  let p, tries = 0;
+  do { p = {x:rand(COLS), y:rand(ROWS)}; tries++; }
+  while (snake.some(s => s.x===p.x && s.y===p.y) && tries < 1000);
+  apple = p;
+}
+function setHud(){
+  $('#score').textContent = score;
+  $('#best').textContent = bests[skin.id] || 0;
+  $('#sname').textContent = skin.name;
+}
+function overlay(title, sub, buttons=[]){
+  ov.innerHTML = `<h2>${title}</h2><p>${sub}</p><div class="btns">` +
+    buttons.map(b => `<button data-act="${b[0]}">${b[1]}</button>`).join('') + `</div>`;
+  ov.hidden = false;
+}
+ov.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  ({play:startGame, menu:showMenu, resume:togglePause})[b.dataset.act]();
+});
+
+function burst(x,y,count,cols){
+  for (let i=0; i<count; i++) {
+    const a = Math.random()*7, s = 60+Math.random()*180, life = .6+Math.random()*.4;
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life,max:life,size:2+Math.random()*4,col:cols[i%cols.length]});
+  }
+}
+
+function step(){
+  if (queue.length) dir = queue.shift();
+  const h = {x:snake[0].x+dir.x, y:snake[0].y+dir.y};
+  const eat = h.x===apple.x && h.y===apple.y;
+  const body = eat ? snake : snake.slice(0,-1);
+  if (h.x<0 || h.y<0 || h.x>=COLS || h.y>=ROWS || body.some(s => s.x===h.x && s.y===h.y)) { die(); return; }
+  prev = snake.map(p => ({...p}));
+  snake.unshift(h);
+  if (eat) {
+    score += 10; apples++;
+    burst((apple.x+.5)*CELL, (apple.y+.5)*CELL, 18, skin.parts);
+    breathUntil = performance.now() + 450;
+    placeApple(); setHud();
+    tick = Math.max(70, 145 - apples*3.5);
+  } else snake.pop();
+}
+
+function die(){
+  state = 'dead'; acc = tick; shake = .35;
+  burst((snake[0].x+.5)*CELL, (snake[0].y+.5)*CELL, 26, ['#ff4d4d','#ffffff',...skin.parts]);
+  let rec = false;
+  if (score > (bests[skin.id]||0)) { bests[skin.id] = score; rec = true; save(); }
+  setHud();
+  setTimeout(() => {
+    if (state === 'dead')
+      overlay('Game over', `Poäng: ${score}` + (rec && score>0 ? ' · 🎉 Nytt rekord!' : ''),
+              [['play','Spela igen'],['menu','Byt figur']]);
+  }, 500);
+}
+
+function startGame(){
+  $('#menu').style.display = 'none'; $('#game').style.display = 'block';
+  reset(); state = 'ready';
+  overlay('Redo?', 'Tryck på en piltangent (eller svep) för att börja');
+}
+function showMenu(){
+  state = 'menu'; ov.hidden = true;
+  $('#game').style.display = 'none'; $('#menu').style.display = 'flex';
+  refreshCards();
+}
+function togglePause(){
+  if (state === 'playing') {
+    state = 'paused';
+    overlay('Pausad', 'Tryck mellanslag för att fortsätta', [['resume','Fortsätt'],['menu','Byt figur']]);
+  } else if (state === 'paused') { state = 'playing'; ov.hidden = true; }
+}
+
+/* ---- Styrning ---- */
+const DIRS = {ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0],w:[0,-1],s:[0,1],a:[-1,0],d:[1,0]};
+function input(d){
+  if (state === 'ready') { if (d.x === -1) return; dir = d; state = 'playing'; ov.hidden = true; return; }
+  if (state !== 'playing') return;
+  const l = queue.length ? queue[queue.length-1] : dir;
+  if ((d.x===-l.x && d.y===-l.y) || (d.x===l.x && d.y===l.y)) return;
+  if (queue.length < 2) queue.push(d);
+}
+addEventListener('keydown', e => {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (DIRS[k]) { e.preventDefault(); input({x:DIRS[k][0], y:DIRS[k][1]}); return; }
+  if (k === ' ' || k === 'Enter') {
+    e.preventDefault();
+    if (state === 'playing' || state === 'paused') togglePause();
+    else if (state === 'dead' || state === 'menu') startGame();
+  }
+  if (k === 'Escape' && state !== 'menu') showMenu();
+});
+let t0 = null; const wrap = $('#wrap');
+wrap.addEventListener('touchstart', e => { const t = e.changedTouches[0]; t0 = {x:t.clientX, y:t.clientY}; });
+wrap.addEventListener('touchend', e => {
+  if (!t0) return;
+  const t = e.changedTouches[0], dx = t.clientX-t0.x, dy = t.clientY-t0.y; t0 = null;
+  if (Math.max(Math.abs(dx),Math.abs(dy)) < 20) return;
+  input(Math.abs(dx) > Math.abs(dy) ? {x:Math.sign(dx),y:0} : {x:0,y:Math.sign(dy)});
+});
+document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'playing') togglePause(); });
+
+/* ---- Menyn ---- */
+const grid = $('#cards');
+SKINS.forEach(s => {
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.innerHTML = `<canvas width="180" height="84"></canvas><strong>${s.name}</strong>` +
+                 `<small>${s.type} · Rekord <span class="b">0</span></small>`;
+  el.onclick = () => select(s);
+  grid.appendChild(el);
+  s.el = el; s.cv = el.querySelector('canvas').getContext('2d');
+});
+function refreshCards(){
+  SKINS.forEach(s => {
+    s.el.querySelector('.b').textContent = bests[s.id] || 0;
+    s.el.classList.toggle('sel', s === skin);
+  });
+  $('#playBtn').textContent = `Spela som ${skin.name}`;
+}
+function select(s){ skin = s; save(); refreshCards(); }
+$('#playBtn').onclick = startGame;
+$('#menuBtn').onclick = showMenu;
+refreshCards();
+
+function drawMenu(){
+  SKINS.forEach((s,idx) => {
+    const c = s.cv; c.fillStyle = s.bg[0]; c.fillRect(0,0,180,84);
+    const pts = [];
+    for (let i=0; i<8; i++) pts.push({x:130-i*16, y:42+Math.sin(i*.8-time*3)*9});
+    drawCreature(c, pts, s, 9.5, time, Math.sin(time*2+idx) > .75);
+  });
+}
+
+/* ---- Ritning av spelplanen ---- */
+function render(dt){
+  ctx.save();
+  if (shake > 0) { shake -= dt; ctx.translate((Math.random()-.5)*8, (Math.random()-.5)*8); }
+  for (let y=0; y<ROWS; y++) for (let x=0; x<COLS; x++) {
+    ctx.fillStyle = skin.bg[(x+y)%2]; ctx.fillRect(x*CELL, y*CELL, CELL, CELL);
+  }
+  // äpple
+  const ax=(apple.x+.5)*CELL, ay=(apple.y+.5)*CELL+1, r=CELL*.36*(1+.06*Math.sin(time*5));
+  const g = ctx.createRadialGradient(ax-r*.3, ay-r*.3, r*.1, ax, ay, r*1.1);
+  g.addColorStop(0,'#ff7b7b'); g.addColorStop(1,'#c4161c');
+  ctx.fillStyle = g; ctx.beginPath();
+  ctx.arc(ax-r*.35, ay, r*.75, 0, 7); ctx.arc(ax+r*.35, ay, r*.75, 0, 7); ctx.fill();
+  ctx.strokeStyle='#6b3a1e'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(ax,ay-r*.5); ctx.lineTo(ax+r*.1,ay-r*1.1); ctx.stroke();
+  ctx.fillStyle='#4cc04c'; ctx.beginPath(); ctx.ellipse(ax+r*.5, ay-r*.9, r*.45, r*.22, -.5, 0, 7); ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,.55)'; ctx.beginPath(); ctx.ellipse(ax-r*.55, ay-r*.25, r*.18, r*.3, .5, 0, 7); ctx.fill();
+
+  // figuren (mjuk förflyttning mellan rutorna)
+  const t = Math.min(1, acc/tick);
+  const pts = snake.map((c,i) => {
+    const p = prev[i] || prev[prev.length-1];
+    return {x:(p.x+(c.x-p.x)*t+.5)*CELL, y:(p.y+(c.y-p.y)*t+.5)*CELL};
+  });
+  drawCreature(ctx, pts, skin, CELL*skin.size, time, performance.now() < breathUntil);
+
+  // partiklar
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life/p.max); ctx.fillStyle = p.col;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1; ctx.restore();
+}
+
+function frame(now){
+  const dt = Math.min(now-last, 50); last = now; time = now/1000;
+  if (state === 'menu') drawMenu();
+  else {
+    if (state === 'playing') {
+      acc += dt;
+      while (acc >= tick && state === 'playing') { acc -= tick; step(); }
+    }
+    particles.forEach(p => { p.life -= dt/1000; p.x += p.vx*dt/1000; p.y += p.vy*dt/1000; p.vx *= .97; p.vy *= .97; });
+    particles = particles.filter(p => p.life > 0);
+    render(dt/1000);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
+EOF
+python3 -m http.server 800
